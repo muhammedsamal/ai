@@ -68,27 +68,9 @@ func main() {
 
 	prompt := strings.Join(os.Args[1:], " ")
 
-	// Spinner start
-	done := make(chan bool)
-	go func() {
-		chars := []string{"|", "/", "-", "\\"}
-		i := 0
-		for {
-			select {
-			case <-done:
-				// overwrite the line with spaces, then return to the start
-				fmt.Print("\r          \r")
-				return
-			default:
-				fmt.Printf("\rThinking %s", chars[i%len(chars)])
-				i++
-				time.Sleep(100 * time.Millisecond)
-			}
-		}
-	}()
-
+	stop := spinner()
 	result, err := ai(prompt)
-	done <- true // stop spinner
+	stop()
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -104,9 +86,38 @@ func main() {
 
 }
 
+func spinner() func() {
+	done := make(chan bool)
+	go func() {
+		chars := []string{"|", "/", "-", "\\"}
+		i := 0
+		for {
+			select {
+			case <-done:
+				fmt.Print("\r          \r")
+				return
+			default:
+				fmt.Printf("\rThinking %s", chars[i%len(chars)])
+				i++
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	}()
+	return func() { done <- true }
+}
+
 func ai(input string) (AIResult, error) {
 	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI}
-	return providers[rand.Intn(len(providers))](input)
+	rand.Shuffle(len(providers), func(i, j int) { providers[i], providers[j] = providers[j], providers[i] })
+	var lastErr error
+	for _, p := range providers {
+		result, err := p(input)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+	}
+	return AIResult{}, fmt.Errorf("all providers failed: %w", lastErr)
 }
 
 func groqAPI(input string) (AIResult, error) {
