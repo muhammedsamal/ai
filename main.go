@@ -277,9 +277,13 @@ func openAIResponses(input string) (AIResult, error) {
 		Duration: duration,
 	}
 
-	if len(res.Output) > 0 && len(res.Output[0].Content) > 0 {
-		result.Content = res.Output[0].Content[0].Text
-		return result, nil
+	for _, output := range res.Output {
+		for _, c := range output.Content {
+			if c.Text != "" {
+				result.Content = c.Text
+				return result, nil
+			}
+		}
 	}
 
 	result.Content = "No response content"
@@ -297,7 +301,10 @@ func cloudflareAI(input string) (AIResult, error) {
 	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/%s", accountID, model)
 
 	payload := map[string]interface{}{
-		"prompt": SYSTEM_PROMPT + "\n\n" + input,
+		"messages": []map[string]string{
+			{"role": "system", "content": SYSTEM_PROMPT},
+			{"role": "user", "content": input},
+		},
 	}
 
 	jsonBody, _ := json.Marshal(payload)
