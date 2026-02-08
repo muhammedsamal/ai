@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -60,30 +61,43 @@ const SYSTEM_PROMPT = `Be extremely concise. Sacrifice grammar for the sake of c
 
 func main() {
 	godotenv.Load()
-	// join all args after program name
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: at {prompt}")
+
+	args := os.Args[1:]
+	if len(args) < 1 {
+		fmt.Println("Usage: ai [-a] {prompt}")
 		return
 	}
 
-	prompt := strings.Join(os.Args[1:], " ")
+	allMode := false
+	if args[0] == "-a" {
+		allMode = true
+		args = args[1:]
+	}
 
-	stop := spinner()
-	result, err := ai(prompt)
-	stop()
-	if err != nil {
-		fmt.Println("Error:", err)
+	if len(args) < 1 {
+		fmt.Println("Usage: ai [-a] {prompt}")
 		return
 	}
 
-	content := strings.TrimSpace(result.Content)
-	fmt.Println()
-	fmt.Println(content)
-	fmt.Printf("\n[%s | %d tokens | %s]\n", result.Model, result.Tokens, result.Duration.Round(time.Millisecond))
+	prompt := strings.Join(args, " ")
 
-	// copy to clipboard
-	clipboard.WriteAll(content)
+	if allMode {
+		aiAll(prompt)
+	} else {
+		stop := spinner()
+		result, err := ai(prompt)
+		stop()
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
 
+		content := strings.TrimSpace(result.Content)
+		fmt.Println()
+		fmt.Println(content)
+		fmt.Printf("\n[%s | %d tokens | %s]\n", result.Model, result.Tokens, result.Duration.Round(time.Millisecond))
+		clipboard.WriteAll(content)
+	}
 }
 
 func spinner() func() {
@@ -104,6 +118,33 @@ func spinner() func() {
 		}
 	}()
 	return func() { done <- true }
+}
+
+func aiAll(input string) {
+	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI}
+	results := make(chan AIResult, len(providers))
+	var wg sync.WaitGroup
+
+	for _, p := range providers {
+		wg.Add(1)
+		go func(fn func(string) (AIResult, error)) {
+			defer wg.Done()
+			result, err := fn(input)
+			if err == nil {
+				results <- result
+			}
+		}(p)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for result := range results {
+		content := strings.TrimSpace(result.Content)
+		fmt.Printf("\n--- %s ---\n%s\n[%d tokens | %s]\n", result.Model, content, result.Tokens, result.Duration.Round(time.Millisecond))
+	}
 }
 
 func ai(input string) (AIResult, error) {
@@ -189,7 +230,7 @@ func openAIResponses(input string) (AIResult, error) {
 	}
 
 	payload := map[string]interface{}{
-		"model":        "gpt-5.2",
+		"model":        "gpt-5-mini-2025-08-07",
 		"instructions": SYSTEM_PROMPT,
 		"input":        input,
 	}
