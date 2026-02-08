@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/atotto/clipboard"
+	"github.com/joho/godotenv"
 	"io"
 	"math/rand"
 	"net/http"
@@ -41,6 +42,13 @@ type ResponsesAPIResponse struct {
 	Model string `json:"model"`
 }
 
+type CloudflareResponse struct {
+	Result struct {
+		Response string `json:"response"`
+	} `json:"result"`
+	Success bool `json:"success"`
+}
+
 type AIResult struct {
 	Content  string
 	Model    string
@@ -51,6 +59,7 @@ type AIResult struct {
 const SYSTEM_PROMPT = `Be extremely concise. Sacrifice grammar for the sake of concision. Respond in plain text only. No markdown, no bold, no asterisks.`
 
 func main() {
+	godotenv.Load()
 	// join all args after program name
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: at {prompt}")
@@ -96,7 +105,7 @@ func main() {
 }
 
 func ai(input string) (AIResult, error) {
-	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI}
+	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI}
 	return providers[rand.Intn(len(providers))](input)
 }
 
@@ -207,4 +216,49 @@ func openAIResponses(input string) (AIResult, error) {
 
 	result.Content = "No response content"
 	return result, nil
+}
+
+func cloudflareAI(input string) (AIResult, error) {
+	token := os.Getenv("CLOUDFLARE_API_TOKEN")
+	accountID := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+	if token == "" || accountID == "" {
+		return AIResult{}, fmt.Errorf("CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set")
+	}
+
+	model := "@cf/openai/gpt-oss-120b"
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/%s", accountID, model)
+
+	payload := map[string]interface{}{
+		"prompt": SYSTEM_PROMPT + "\n\n" + input,
+	}
+
+	jsonBody, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	start := time.Now()
+	resp, err := (&http.Client{}).Do(req)
+	duration := time.Since(start)
+	if err != nil {
+		return AIResult{}, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var res CloudflareResponse
+	if err := json.Unmarshal(body, &res); err != nil {
+		return AIResult{}, err
+	}
+
+	if !res.Success {
+		return AIResult{}, fmt.Errorf("cloudflare API returned unsuccessful response")
+	}
+
+	return AIResult{
+		Content:  res.Result.Response,
+		Model:    model,
+		Duration: duration,
+	}, nil
 }
