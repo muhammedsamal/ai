@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/atotto/clipboard"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -68,40 +69,47 @@ func main() {
 }
 
 func ai(input string) (string, error) {
-	apiKey := os.Getenv("GROQ_API_KEY")
-	if apiKey == "" {
-		return "", fmt.Errorf("GROQ_API_KEY is not set")
+	if rand.Intn(2) == 0 {
+		return groqAPI(input)
 	}
-	url := "https://api.groq.com/openai/v1/chat/completions"
+	return vercelAIGateway(input)
+}
+
+func groqAPI(input string) (string, error) {
+	return callAPI("GROQ_API_KEY", "https://api.groq.com/openai/v1/chat/completions", "moonshotai/kimi-k2-instruct-0905", input)
+}
+
+func vercelAIGateway(input string) (string, error) {
+	return callAPI("AI_GATEWAY_API_KEY", "https://ai-gateway.vercel.sh/v1/chat/completions", "openai/gpt-5.2", input)
+}
+
+func callAPI(keyEnv, url, model, input string) (string, error) {
+	apiKey := os.Getenv(keyEnv)
+	if apiKey == "" {
+		return "", fmt.Errorf("%s is not set", keyEnv)
+	}
 
 	payload := map[string]interface{}{
-		"model": "moonshotai/kimi-k2-instruct-0905",
+		"model":  model,
+		"stream": false,
 		"messages": []map[string]interface{}{
-			{
-				"role":    "system",
-				"content": SYSTEM_PROMPT,
-			},
-			{
-				"role":    "user",
-				"content": input,
-			},
+			{"role": "system", "content": SYSTEM_PROMPT},
+			{"role": "user", "content": input},
 		},
 	}
 
 	jsonBody, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 
 	var res Response
 	if err := json.Unmarshal(body, &res); err != nil {
