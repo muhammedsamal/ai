@@ -62,6 +62,15 @@ type GeminiResponse struct {
 type CloudflareResponse struct {
 	Result struct {
 		Response string `json:"response"`
+		Choices  []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			TotalTokens int `json:"total_tokens"`
+		} `json:"usage"`
+		Model string `json:"model"`
 	} `json:"result"`
 	Success bool `json:"success"`
 }
@@ -331,11 +340,21 @@ func cloudflareAI(input string) (AIResult, error) {
 		return AIResult{}, fmt.Errorf("cloudflare API returned unsuccessful response")
 	}
 
-	return AIResult{
-		Content:  res.Result.Response,
+	result := AIResult{
 		Model:    model,
+		Tokens:   res.Result.Usage.TotalTokens,
 		Duration: duration,
-	}, nil
+	}
+
+	if len(res.Result.Choices) > 0 {
+		result.Content = res.Result.Choices[0].Message.Content
+	} else if res.Result.Response != "" {
+		result.Content = res.Result.Response
+	} else {
+		result.Content = "No response content"
+	}
+
+	return result, nil
 }
 
 func geminiAPI(input string) (AIResult, error) {
