@@ -43,6 +43,22 @@ type ResponsesAPIResponse struct {
 	Model string `json:"model"`
 }
 
+type GeminiResponse struct {
+	Candidates []struct {
+		Content struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"content"`
+	} `json:"candidates"`
+	UsageMetadata struct {
+		PromptTokenCount     int `json:"promptTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		TotalTokenCount      int `json:"totalTokenCount"`
+	} `json:"usageMetadata"`
+	ModelVersion string `json:"modelVersion"`
+}
+
 type CloudflareResponse struct {
 	Result struct {
 		Response string `json:"response"`
@@ -121,7 +137,7 @@ func spinner() func() {
 }
 
 func aiAll(input string) {
-	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI}
+	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI, geminiAPI}
 	results := make(chan AIResult, len(providers))
 	var wg sync.WaitGroup
 
@@ -148,7 +164,7 @@ func aiAll(input string) {
 }
 
 func ai(input string) (AIResult, error) {
-	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI}
+	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI, geminiAPI}
 	rand.Shuffle(len(providers), func(i, j int) { providers[i], providers[j] = providers[j], providers[i] })
 	var lastErr error
 	for _, p := range providers {
@@ -170,7 +186,7 @@ func deepseekAPI(input string) (AIResult, error) {
 }
 
 func vercelAIGateway(input string) (AIResult, error) {
-	return callAPI("AI_GATEWAY_API_KEY", "https://ai-gateway.vercel.sh/v1/chat/completions", "google/gemini-3-flash", input)
+	return callAPI("AI_GATEWAY_API_KEY", "https://ai-gateway.vercel.sh/v1/chat/completions", "anthropic/claude-haiku-4.5", input)
 }
 
 func callAPI(keyEnv, url, model, input string) (AIResult, error) {
@@ -313,4 +329,57 @@ func cloudflareAI(input string) (AIResult, error) {
 		Model:    model,
 		Duration: duration,
 	}, nil
+}
+
+func geminiAPI(input string) (AIResult, error) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return AIResult{}, fmt.Errorf("GEMINI_API_KEY is not set")
+	}
+
+	model := "gemini-3-flash-preview"
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", model)
+
+	payload := map[string]interface{}{
+		"system_instruction": map[string]interface{}{
+			"parts": []map[string]string{{"text": SYSTEM_PROMPT}},
+		},
+		"contents": []map[string]interface{}{
+			{"parts": []map[string]string{{"text": input}}},
+		},
+	}
+
+	jsonBody, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", apiKey)
+
+	start := time.Now()
+	resp, err := (&http.Client{}).Do(req)
+	duration := time.Since(start)
+	if err != nil {
+		return AIResult{}, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var res GeminiResponse
+	if err := json.Unmarshal(body, &res); err != nil {
+		return AIResult{}, err
+	}
+
+	result := AIResult{
+		Model:    res.ModelVersion,
+		Tokens:   res.UsageMetadata.TotalTokenCount,
+		Duration: duration,
+	}
+
+	if len(res.Candidates) > 0 && len(res.Candidates[0].Content.Parts) > 0 {
+		result.Content = res.Candidates[0].Content.Parts[0].Text
+		return result, nil
+	}
+
+	result.Content = "No response content"
+	return result, nil
 }
