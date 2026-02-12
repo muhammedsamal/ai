@@ -146,7 +146,7 @@ func spinner() func() {
 }
 
 func aiAll(input string) {
-	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI, geminiAPI}
+	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI, geminiAPI, openRouterAPI}
 	results := make(chan AIResult, len(providers))
 	var wg sync.WaitGroup
 
@@ -173,7 +173,7 @@ func aiAll(input string) {
 }
 
 func ai(input string) (AIResult, error) {
-	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI, geminiAPI}
+	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI, geminiAPI, openRouterAPI}
 	rand.Shuffle(len(providers), func(i, j int) { providers[i], providers[j] = providers[j], providers[i] })
 	var lastErr error
 	for _, p := range providers {
@@ -192,6 +192,10 @@ func groqAPI(input string) (AIResult, error) {
 
 func deepseekAPI(input string) (AIResult, error) {
 	return callAPI("DEEPSEEK_API_KEY", "https://api.deepseek.com/chat/completions", "deepseek-chat", input)
+}
+
+func openRouterAPI(input string) (AIResult, error) {
+	return callAPI("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1/chat/completions", "openrouter/aurora-alpha", input)
 }
 
 func vercelAIGateway(input string) (AIResult, error) {
