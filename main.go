@@ -310,7 +310,7 @@ func cloudflareAI(input string) (AIResult, error) {
 		return AIResult{}, fmt.Errorf("CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set")
 	}
 
-	model := "@cf/openai/gpt-oss-120b"
+	model := "@cf/zai-org/glm-4.7-flash"
 	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/%s", accountID, model)
 
 	payload := map[string]interface{}{
