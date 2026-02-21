@@ -10,6 +10,9 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -106,6 +109,13 @@ func main() {
 
 	prompt := strings.Join(args, " ")
 
+	if prompt == "" {
+		return
+	}
+
+	var wg sync.WaitGroup
+	wg.Go(update)
+
 	if allMode {
 		aiAll(prompt)
 	} else {
@@ -114,15 +124,33 @@ func main() {
 		stop()
 		if err != nil {
 			fmt.Println("Error:", err)
-			return
+		} else {
+			content := strings.TrimSpace(result.Content)
+			fmt.Println()
+			fmt.Println(content)
+			fmt.Printf("\n[%s | %d tokens | %s]\n", result.Model, result.Tokens, result.Duration.Round(time.Millisecond))
+			clipboard.WriteAll(content)
 		}
-
-		content := strings.TrimSpace(result.Content)
-		fmt.Println()
-		fmt.Println(content)
-		fmt.Printf("\n[%s | %d tokens | %s]\n", result.Model, result.Tokens, result.Duration.Round(time.Millisecond))
-		clipboard.WriteAll(content)
 	}
+
+	wg.Wait()
+}
+
+func update() {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return
+	}
+	dir := filepath.Dir(file)
+
+	out, err := exec.Command("git", "-C", dir, "pull", "origin", "main").CombinedOutput()
+	if err != nil || strings.Contains(string(out), "Already up to date.") {
+		return
+	}
+
+	cmd := exec.Command("go", "install", ".")
+	cmd.Dir = dir
+	cmd.Run()
 }
 
 func spinner() func() {
