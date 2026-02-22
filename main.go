@@ -85,7 +85,21 @@ type AIResult struct {
 	Duration time.Duration
 }
 
-const SYSTEM_PROMPT = `Be extremely concise. Sacrifice grammar for the sake of concision. Respond in plain text only. No markdown, no bold, no asterisks.`
+type AIProvider func(string) (AIResult, error)
+
+func getProviders() []AIProvider {
+	return []AIProvider{
+		groqAPI,
+		vercelAIGateway,
+		openAIResponses,
+		deepseekAPI,
+		cloudflareAI,
+		func(s string) (AIResult, error) { return geminiAPI(s, false) },
+		openRouterAPI,
+	}
+}
+
+var SYSTEM_PROMPT = fmt.Sprintf("Be extremely concise. Sacrifice grammar for the sake of concision. Respond in plain text only. No markdown, no bold, no asterisks. Current datetime: %s", time.Now().Format("2006-01-02 15:04:05"))
 
 func main() {
 	godotenv.Load()
@@ -177,15 +191,7 @@ func spinner() func() {
 }
 
 func aiAll(input string) {
-	providers := []func(string) (AIResult, error){
-		groqAPI,
-		vercelAIGateway,
-		openAIResponses,
-		deepseekAPI,
-		cloudflareAI,
-		func(s string) (AIResult, error) { return geminiAPI(s, false) },
-		openRouterAPI,
-	}
+	providers := getProviders()
 	results := make(chan AIResult, len(providers))
 	var wg sync.WaitGroup
 
@@ -215,15 +221,7 @@ func ai(input string, useSearch bool) (AIResult, error) {
 	if useSearch {
 		return geminiAPI(input, true)
 	}
-	providers := []func(string) (AIResult, error){
-		groqAPI,
-		vercelAIGateway,
-		openAIResponses,
-		deepseekAPI,
-		cloudflareAI,
-		func(s string) (AIResult, error) { return geminiAPI(s, false) },
-		openRouterAPI,
-	}
+	providers := getProviders()
 	rand.Shuffle(len(providers), func(i, j int) { providers[i], providers[j] = providers[j], providers[i] })
 	var lastErr error
 	for _, p := range providers {
@@ -252,6 +250,46 @@ func vercelAIGateway(input string) (AIResult, error) {
 	return callAPI("AI_GATEWAY_API_KEY", "https://ai-gateway.vercel.sh/v1/chat/completions", "anthropic/claude-haiku-4.5", input)
 }
 
+func doRequest[T any](url string, headers map[string]string, payload interface{}) (T, time.Duration, error) {
+	var result T
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return result, 0, err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return result, 0, err
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	start := time.Now()
+	resp, err := (&http.Client{}).Do(req)
+	duration := time.Since(start)
+	if err != nil {
+		return result, duration, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return result, duration, err
+	}
+
+	if resp.StatusCode >= 400 {
+		return result, duration, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	err = json.Unmarshal(body, &result)
+	return result, duration, err
+}
+
 func callAPI(keyEnv, url, model, input string) (AIResult, error) {
 	apiKey := os.Getenv(keyEnv)
 	if apiKey == "" {
@@ -267,23 +305,8 @@ func callAPI(keyEnv, url, model, input string) (AIResult, error) {
 		},
 	}
 
-	jsonBody, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	start := time.Now()
-	resp, err := (&http.Client{}).Do(req)
-	duration := time.Since(start)
+	res, duration, err := doRequest[Response](url, map[string]string{"Authorization": "Bearer " + apiKey}, payload)
 	if err != nil {
-		return AIResult{}, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	var res Response
-	if err := json.Unmarshal(body, &res); err != nil {
 		return AIResult{}, err
 	}
 
@@ -314,23 +337,8 @@ func openAIResponses(input string) (AIResult, error) {
 		"input":        input,
 	}
 
-	jsonBody, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	start := time.Now()
-	resp, err := (&http.Client{}).Do(req)
-	duration := time.Since(start)
+	res, duration, err := doRequest[ResponsesAPIResponse]("https://api.openai.com/v1/responses", map[string]string{"Authorization": "Bearer " + apiKey}, payload)
 	if err != nil {
-		return AIResult{}, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	var res ResponsesAPIResponse
-	if err := json.Unmarshal(body, &res); err != nil {
 		return AIResult{}, err
 	}
 
@@ -370,23 +378,8 @@ func cloudflareAI(input string) (AIResult, error) {
 		},
 	}
 
-	jsonBody, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	start := time.Now()
-	resp, err := (&http.Client{}).Do(req)
-	duration := time.Since(start)
+	res, duration, err := doRequest[CloudflareResponse](url, map[string]string{"Authorization": "Bearer " + token}, payload)
 	if err != nil {
-		return AIResult{}, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	var res CloudflareResponse
-	if err := json.Unmarshal(body, &res); err != nil {
 		return AIResult{}, err
 	}
 
@@ -435,23 +428,8 @@ func geminiAPI(input string, useSearch bool) (AIResult, error) {
 		}
 	}
 
-	jsonBody, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", apiKey)
-
-	start := time.Now()
-	resp, err := (&http.Client{}).Do(req)
-	duration := time.Since(start)
+	res, duration, err := doRequest[GeminiResponse](url, map[string]string{"x-goog-api-key": apiKey}, payload)
 	if err != nil {
-		return AIResult{}, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	var res GeminiResponse
-	if err := json.Unmarshal(body, &res); err != nil {
 		return AIResult{}, err
 	}
 
