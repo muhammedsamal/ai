@@ -91,19 +91,22 @@ func main() {
 	godotenv.Load()
 
 	args := os.Args[1:]
-	if len(args) < 1 {
-		fmt.Println("Usage: ai [-a] {prompt}")
-		return
-	}
-
 	allMode := false
-	if args[0] == "-a" {
-		allMode = true
-		args = args[1:]
+	searchMode := false
+	for len(args) > 0 {
+		if args[0] == "-a" {
+			allMode = true
+			args = args[1:]
+		} else if args[0] == "-s" {
+			searchMode = true
+			args = args[1:]
+		} else {
+			break
+		}
 	}
 
 	if len(args) < 1 {
-		fmt.Println("Usage: ai [-a] {prompt}")
+		fmt.Println("Usage: ai [-a] [-s] {prompt}")
 		return
 	}
 
@@ -120,7 +123,7 @@ func main() {
 		aiAll(prompt)
 	} else {
 		stop := spinner()
-		result, err := ai(prompt)
+		result, err := ai(prompt, searchMode)
 		stop()
 		if err != nil {
 			fmt.Println("Error:", err)
@@ -174,7 +177,15 @@ func spinner() func() {
 }
 
 func aiAll(input string) {
-	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI, geminiAPI, openRouterAPI}
+	providers := []func(string) (AIResult, error){
+		groqAPI,
+		vercelAIGateway,
+		openAIResponses,
+		deepseekAPI,
+		cloudflareAI,
+		func(s string) (AIResult, error) { return geminiAPI(s, false) },
+		openRouterAPI,
+	}
 	results := make(chan AIResult, len(providers))
 	var wg sync.WaitGroup
 
@@ -200,8 +211,19 @@ func aiAll(input string) {
 	}
 }
 
-func ai(input string) (AIResult, error) {
-	providers := []func(string) (AIResult, error){groqAPI, vercelAIGateway, openAIResponses, deepseekAPI, cloudflareAI, geminiAPI, openRouterAPI}
+func ai(input string, useSearch bool) (AIResult, error) {
+	if useSearch {
+		return geminiAPI(input, true)
+	}
+	providers := []func(string) (AIResult, error){
+		groqAPI,
+		vercelAIGateway,
+		openAIResponses,
+		deepseekAPI,
+		cloudflareAI,
+		func(s string) (AIResult, error) { return geminiAPI(s, false) },
+		openRouterAPI,
+	}
 	rand.Shuffle(len(providers), func(i, j int) { providers[i], providers[j] = providers[j], providers[i] })
 	var lastErr error
 	for _, p := range providers {
@@ -389,7 +411,7 @@ func cloudflareAI(input string) (AIResult, error) {
 	return result, nil
 }
 
-func geminiAPI(input string) (AIResult, error) {
+func geminiAPI(input string, useSearch bool) (AIResult, error) {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
 		return AIResult{}, fmt.Errorf("GEMINI_API_KEY is not set")
@@ -405,6 +427,12 @@ func geminiAPI(input string) (AIResult, error) {
 		"contents": []map[string]interface{}{
 			{"parts": []map[string]string{{"text": input}}},
 		},
+	}
+
+	if useSearch {
+		payload["tools"] = []map[string]interface{}{
+			{"google_search": map[string]interface{}{}},
+		}
 	}
 
 	jsonBody, _ := json.Marshal(payload)
